@@ -30,6 +30,7 @@ type Client struct {
 	cleanSession     bool
 	willMessage      *PublishPacket
 	takeOver         bool
+	stopLock         sync.Mutex
 }
 
 func newClient(conn net.Conn, clientID string, maxQDepth int) *Client {
@@ -80,6 +81,9 @@ func (c *Client) KeepAliveTimer(hrotti *Hrotti) {
 func (c *Client) StopForTakeover() {
 	//close the stop channel, close the network connection, wait for all the goroutines in the waitgroup to
 	//finish, set the conn and bufferedconn to nil
+	c.stopLock.Lock()
+	defer c.stopLock.Unlock()
+
 	c.takeOver = true
 	c.stopOnce.Do(func() {
 		INFO.Println("Closing Stop chan")
@@ -95,6 +99,9 @@ func (c *Client) Stop(sendWill bool, hrotti *Hrotti) {
 	//Its possible that error conditions with the network connection might cause both Send and Receive to
 	//try and call Stop(), but we only want it to be called once, so using the sync.Once in the client we
 	//run the embedded function, later calls with the same sync.Once will simply return.
+	c.stopLock.Lock()
+	defer c.stopLock.Unlock()
+
 	INFO.Println("Stopping client", c.clientID, c.conn.RemoteAddr())
 	if !c.takeOver {
 		c.stopOnce.Do(func() {
@@ -301,7 +308,7 @@ func (c *Client) Receive(hrotti *Hrotti) {
 				//Check that we also think this message id is in use, if it is remove the original
 				//PUBLISH from the outbound persistence store and set the message id as free for reuse
 				if c.inUse(pa.MessageID) {
-					hrotti.PersistStore.Delete(c.clientID, OUTBOUND, pa.UUID())
+					hrotti.PersistStore.Delete(c.clientID, OUTBOUND, *c.index[pa.MessageID])
 					c.freeID(pa.MessageID)
 				} else {
 					ERROR.Println("Received a PUBACK for unknown msgid", pa.MessageID, "from", c.clientID)

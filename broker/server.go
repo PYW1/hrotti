@@ -141,6 +141,14 @@ func (h *Hrotti) Stop() {
 }
 
 func (h *Hrotti) InitClient(conn net.Conn) {
+	defer func() {
+		if err := recover(); err != nil {
+			ERROR.Println("InitClient panic:", err)
+			conn.Close()
+			return
+		}
+	}()
+
 	var sendSessionID bool
 	/*var cph fixedHeader
 
@@ -167,7 +175,12 @@ func (h *Hrotti) InitClient(conn net.Conn) {
 	cp := newControlPacket(CONNECT).(*connectPacket)
 	cp.fixedHeader = cph
 	cp.unpack(body)*/
-	rp, _ := ReadPacket(conn)
+	rp, err := ReadPacket(conn)
+	if rp == nil {
+		ERROR.Println("Read ConnectPacket error", err)
+		conn.Close()
+		return
+	}
 	cp := rp.(*ConnectPacket)
 
 	//Validate the CONNECT, check fields, values etc.
@@ -199,7 +212,7 @@ func (h *Hrotti) InitClient(conn net.Conn) {
 	//Lock the clients hashmap while we check if we already know this clientid.
 	h.clients.Lock()
 	c, ok := h.clients.list[cp.ClientIdentifier]
-	if ok && cp.CleanSession {
+	if ok && !cp.CleanSession {
 		//and if we do, if the clientid is currently connected...
 		if c.Connected() {
 			INFO.Println("Clientid", c.clientID, "already connected, stopping first client")
